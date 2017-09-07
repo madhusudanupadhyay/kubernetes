@@ -1,6 +1,8 @@
 # Solarflare Device Plugin
 ---------------------------
 
+[![asciicast](https://asciinema.org/a/YJ53xGKmiQiR98yHvenQV4HX6.png)](https://asciinema.org/a/YJ53xGKmiQiR98yHvenQV4HX6)
+
 ### Steps to deploy
     $ git clone http:
     $ cd kubernetes

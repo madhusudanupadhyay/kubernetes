@@ -25,15 +25,10 @@ spec:
         tier: node
     spec:
       hostNetwork: true
-      nodeSelector:
-        beta.kubernetes.io/arch: amd64
-      tolerations:
-      - key: node-role.kubernetes.io/master
-        operator: Exists
-        effect: NoSchedule
       containers:
       - name: device-plugin-ctr
         image: sfc-dev-plugin:latest
+        command: [ "start_pluging.sh" ]
         imagePullPolicy: Never
         securityContext:
           privileged: true

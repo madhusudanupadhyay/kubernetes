@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"os/exec"
 	//"syscall"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/golang/glog"
@@ -45,16 +46,29 @@ var resourceName string //= "pod.alpha.kubernetes.io/opaque-int-resource-sfcNIC"
 var k8sAPI string
 var nodeLabelVersion string
 
+const (
+	regExpPID = "(?m)[\r\n]^PID is [0-9].*$"
+)
+
 //)
 // sfcNICManager manages Solarflare NIC devices
+type physicalName string
+
 type sfcNICManager struct {
-	devices     map[string]*pluginapi.Device
+	//devices     map[string]*pluginapi.Device
+	devices     map[physicalName]*device
 	deviceFiles []string
+}
+
+type device struct {
+	logicalName    string
+	allocatedToPID string
+	grpcDevice     *pluginapi.Device
 }
 
 func NewSFCNICManager() (*sfcNICManager, error) {
 	return &sfcNICManager{
-		devices:     make(map[string]*pluginapi.Device),
+		devices:     make(map[physicalName]*device),
 		deviceFiles: []string{"/dev/onload", "/dev/onload_cplane", "dev/onload_epoll", "/dev/sfc_char", "/dev/sfc_affinity"},
 	}, nil
 }
@@ -76,7 +90,8 @@ func ExecCommand(cmdName string, arg ...string) (bytes.Buffer, error) {
 
 func (sfc *sfcNICManager) discoverSolarflareResources() bool {
 	found := false
-	sfc.devices = make(map[string]*pluginapi.Device)
+	//sfc.devices = make(map[string]*pluginapi.Device)
+	//sfc.devices = make(map[physicalName]*device)
 	glog.Info("discoverSolarflareResources")
 	out, err := ExecCommand("lshw", "-short", "-class", "network")
 	if err != nil {
@@ -86,22 +101,33 @@ func (sfc *sfcNICManager) discoverSolarflareResources() bool {
 	re := regexp.MustCompile(regExpSFC)
 	sfcNICs := re.FindAllString(out.String(), -1)
 	for _, nic := range sfcNICs {
-		//nameIf := strings.Fields(nic)[1]
-		fmt.Printf("logical name: %v \n", strings.Fields(nic)[1])
-		//if nameIf == "network" {
-		// When running inside non net=host container, 'devices' column is empty. 'class'
-		// value, 'network', is being parsed as 'Device' incorrectly. Skip it.
-		// H/W path             Device  Class          Description
-		// =======================================================
-		// /0/100/3/0.1                 network        Ethernet Controller XL710 for 40GbE QSFP+
-		///0/3/0                        network        SFC9020 [Solarstorm]
-		//	continue
-		//}
-		dev := pluginapi.Device{ID: strings.Fields(nic)[1], Health: pluginapi.Healthy}
-		sfc.devices[strings.Fields(nic)[1]] = &dev
+		fmt.Printf("NIC HW_identity %v, logical name: %v \n", strings.Fields(nic)[0], strings.Fields(nic)[1])
+		deviceHealth := pluginapi.Healthy
+		logicalName := strings.Fields(nic)[1]
+		if logicalName == "network" {
+			// When device is in container namespace, 'devices' column is empty. 'class'
+			// value, 'network', is being parsed as 'Device' incorrectly. Skip it.
+			// H/W path             Device  Class          Description
+			// =======================================================
+			// /0/100/3/0.1                 network        Ethernet Controller XL710 for 40GbE QSFP+
+			///0/3/0                        network        SFC9020 [Solarstorm]
+			logicalName = ""
+		}
+		// TODO: use 'Set' data structure to delete those devices from sfc.devices which are not found
+		dev, ok := sfc.devices[physicalName(strings.Fields(nic)[0])]
+		if !ok {
+			grpcDev := pluginapi.Device{ID: strings.Fields(nic)[0], Health: deviceHealth}
+			dev = &device{
+				logicalName: logicalName,
+				grpcDevice:  &grpcDev,
+			}
+			sfc.devices[physicalName(strings.Fields(nic)[0])] = dev
+		} else {
+			dev.logicalName = logicalName
+		}
 		found = true
 	}
-	fmt.Printf("Devices: %v \n", sfc.devices)
+	fmt.Printf("Devices: %+v \n", sfc.devices)
 
 	return found
 }
@@ -243,13 +269,13 @@ func (sfc *sfcNICManager) ListAndWatch(emtpy *pluginapi.Empty, stream pluginapi.
 		if !sfc.isOnloadInstallHealthy() {
 			glog.Errorf("Error with onload installation. Marking devices unhealthy.")
 			for _, device := range sfc.devices {
-				device.Health = pluginapi.Unhealthy
+				device.grpcDevice.Health = pluginapi.Unhealthy
 			}
 		}
 		resp := new(pluginapi.ListAndWatchResponse)
 		for _, dev := range sfc.devices {
 			glog.Info("dev ", dev)
-			resp.Devices = append(resp.Devices, dev)
+			resp.Devices = append(resp.Devices, dev.grpcDevice)
 		}
 		glog.Info("resp.Devices ", resp.Devices)
 		if err := stream.Send(resp); err != nil {
@@ -262,10 +288,11 @@ func (sfc *sfcNICManager) ListAndWatch(emtpy *pluginapi.Empty, stream pluginapi.
 
 func (sfc *sfcNICManager) Allocate(ctx context.Context, rqt *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
 	glog.Info("Allocate")
+	sfc.discoverSolarflareResources()
 	resp := new(pluginapi.AllocateResponse)
 	containerName := strings.Join([]string{"k8s", "POD", rqt.PodName, rqt.Namespace}, "_")
 	for _, id := range rqt.DevicesIDs {
-		if _, ok := sfc.devices[id]; ok {
+		if dev, ok := sfc.devices[physicalName(id)]; ok {
 			devRuntime := new(pluginapi.DeviceRuntimeSpec)
 			for _, d := range sfc.deviceFiles {
 				devRuntime.Devices = append(devRuntime.Devices, &pluginapi.DeviceSpec{
@@ -275,19 +302,36 @@ func (sfc *sfcNICManager) Allocate(ctx context.Context, rqt *pluginapi.AllocateR
 				})
 			}
 			resp.Spec = append(resp.Spec, devRuntime)
-			glog.Info("Allocate interface ", id, " to ", containerName)
-			go MoveInterface(containerName, id)
+			if dev.allocatedToPID != "" {
+				glog.Info("interface ", id, " ", dev.logicalName, "previously  allocated to PID: ", dev.allocatedToPID)
+			}
+
+			pid, err := moveInterface(containerName, dev.logicalName, dev.allocatedToPID)
+			if err != nil {
+				return nil, err
+			}
+			dev.allocatedToPID = pid
+			glog.Info("Allocated interface ", id, " ", dev.logicalName, " to ", containerName, ", PID: ", pid)
 		}
 	}
 	return resp, nil
 }
 
-func MoveInterface(containerName string, interfaceName string) {
+func moveInterface(containerName string, interfaceName string, oldPID string) (string, error) {
 	glog.Info("Move NIC to container ", containerName, " net namespace")
-	_, err := ExecCommand("/usr/bin/cont-sfc-nic-move.sh", containerName, interfaceName)
+	pid := ""
+	out, err := ExecCommand("/usr/bin/cont-sfc-nic-move.sh", containerName, interfaceName, oldPID)
 	if err != nil {
 		glog.Error(err)
+		return pid, err
 	}
+	glog.Info(out.String())
+	re := regexp.MustCompile(regExpPID)
+	pidString := re.FindAllString(out.String(), -1)
+	if len(pidString) != 1 {
+		return pid, errors.New(fmt.Sprintf("Num of PIDs is %v, PID count must be 1.", len(pidString)))
+	}
+	return strings.Fields(pidString[0])[2], nil
 }
 
 func AnnotateNodeWithOnloadVersion(version string) {
@@ -368,6 +412,7 @@ func main() {
 		glog.Fatal(err)
 		os.Exit(1)
 	}
+	sfc.devices = make(map[physicalName]*device)
 
 	found := sfc.discoverSolarflareResources()
 	if !found {
