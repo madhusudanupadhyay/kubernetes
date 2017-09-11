@@ -3,7 +3,7 @@ USER root
 
 MAINTAINER vichoudh@redhat.com
 
-RUN yum install -y net-tools make which rsync lshw docker-client openssh-clients libcurl.i686
+RUN yum install -y net-tools make which rsync lshw docker-client openssh-clients libcurl.i686 ethtool
 
 RUN \
   mkdir -p /goroot && \

@@ -41,11 +41,13 @@
     apiVersion: v1
     kind: Pod
     metadata:
-        name: my.pod1
+      name: my.pod1
+      annotations:
+        sfc-nic-ip: 70.70.70.1/24
     spec:
         containers:
         - name: demo1
-        image: sfc-dev-plugin:latest
+        image: centos7-onload:latest
         imagePullPolicy: Never
         resources:
             requests:
