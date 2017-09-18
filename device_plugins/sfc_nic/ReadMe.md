@@ -1,7 +1,7 @@
 # Solarflare Device Plugin
 ---------------------------
 
-[![asciicast](https://asciinema.org/a/YJ53xGKmiQiR98yHvenQV4HX6.png)](https://asciinema.org/a/YJ53xGKmiQiR98yHvenQV4HX6)
+[![asciicast](https://asciinema.org/a/UyzMDcSHB42eWrP0soiwPyhEM.png)](https://asciinema.org/a/UyzMDcSHB42eWrP0soiwPyhEM)
 
 ### Steps to deploy
     $ git clone http:
@@ -54,4 +54,3 @@
                 pod.alpha.kubernetes.io/opaque-int-resource-sfcNIC: '1'
             limits:
                 pod.alpha.kubernetes.io/opaque-int-resource-sfcNIC: '1'
-
