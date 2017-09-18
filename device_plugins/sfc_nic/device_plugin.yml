@@ -4,11 +4,11 @@ kind: ConfigMap
 metadata:
   name: configmap
 data:
-  onload-version: 201606-u1.3
+  onload-version: 201707-scaleout-alpha1
   reg-exp-sfc: (?m)[\r\n]+^.*SFC[6-9].*$
   socket-name: sfcNIC
   resource-name: pod.alpha.kubernetes.io/opaque-int-resource-sfcNIC
-  k8s-api: https://10.12.20.41:6443
+  k8s-api: http://10.12.20.134:8080
   node-label-onload-version: device.sfc.onload-version
 ---
 apiVersion: extensions/v1beta1
@@ -30,8 +30,6 @@ spec:
         image: sfc-dev-plugin:latest
         command: [ "start_pluging.sh" ]
         imagePullPolicy: Never
-        securityContext:
-          privileged: true
         env:
         - name: ONLOAD_VERSION
           valueFrom:
